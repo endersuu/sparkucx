@@ -25,6 +25,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import scala.Option;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -84,11 +85,12 @@ public class UcxShuffleClient extends BlockStoreClient {
                     endpoint.unpackRemoteKey(driverMetadata.dataRkey(mapIdpartition)));
 
             endpoint.getNonBlockingImplicit(
-                    offsetAddress + startReduceId * UnsafeUtils.LONG_SIZE,
+                    offsetAddress + (long) startReduceId * UnsafeUtils.LONG_SIZE,
                     offsetRkeysCache.get(mapIdpartition),
                     UcxUtils.getAddress(offsetMemory.getBuffer()) + offset,
                     size);
-
+            logger.info("==> offer index file request for {}th startReduceId={}, batchLength={}",
+                    i, startReduceId, size / 2L * UnsafeUtils.LONG_SIZE);
             offset += size;
         }
     }
@@ -96,6 +98,7 @@ public class UcxShuffleClient extends BlockStoreClient {
     @Override
     public void fetchBlocks(String host, int port, String execId, String[] blockIds, BlockFetchingListener listener,
                             DownloadFileManager downloadFileManager) {
+        logger.info("==> try to fetch blocks. host={}, execId={}, blockIds={}", host, execId, Arrays.toString(blockIds));
         long startTime = System.currentTimeMillis();
         BlockManagerId blockManagerId = BlockManagerId.apply(execId, host, port, Option.empty());
         UcpEndpoint endpoint = workerWrapper.getConnection(blockManagerId);
@@ -116,7 +119,7 @@ public class UcxShuffleClient extends BlockStoreClient {
 
         RegisteredMemory offsetMemory = ((UcxShuffleManager) SparkEnv.get().shuffleManager())
                 .ucxNode().getMemoryPool().get(totalBlocks * 2 * UnsafeUtils.LONG_SIZE);
-        // Submits N implicit get requests without callback
+        // Submits N implicit get requests without callback for offsets
         submitFetchOffsets(endpoint, blocks, offsetMemory, dataAddresses);
 
         // flush guarantees that all that requests completes when callback is called.

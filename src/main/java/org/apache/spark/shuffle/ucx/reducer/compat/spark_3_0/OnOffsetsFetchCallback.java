@@ -27,7 +27,7 @@ public class OnOffsetsFetchCallback extends ReducerCallback {
     private final RegisteredMemory offsetMemory;
     private final long[] dataAddresses;
     private final Map<Long, Integer> mapId2PartitionId;
-    private Map<Integer, UcpRemoteKey> dataRkeysCache;
+    private final Map<Integer, UcpRemoteKey> dataRkeysCache;
 
     public OnOffsetsFetchCallback(BlockId[] blockIds, UcpEndpoint endpoint, BlockFetchingListener listener,
                                   RegisteredMemory offsetMemory, long[] dataAddresses,
@@ -51,6 +51,7 @@ public class OnOffsetsFetchCallback extends ReducerCallback {
         int offsetSize = UnsafeUtils.LONG_SIZE;
         for (int i = 0; i < blockIds.length; i++) {
             // Blocks in metadata buffer are in form | blockOffsetStart | blockOffsetEnd |
+            logger.info("==> start calculate info of {}th blockId={}", i, blockIds[i]);
             if (blockIds[i] instanceof ShuffleBlockBatchId) {
                 ShuffleBlockBatchId blockBatchId = (ShuffleBlockBatchId) blockIds[i];
                 int blocksInBatch = blockBatchId.endReduceId() - blockBatchId.startReduceId();
@@ -77,6 +78,7 @@ public class OnOffsetsFetchCallback extends ReducerCallback {
         offset = 0;
         // Submits N fetch blocks requests
         for (int i = 0; i < blockIds.length; i++) {
+            logger.info("==> offer fetch request of {}th blockId={}", i, blockIds[i]);
             int mapPartitionId = (blockIds[i] instanceof ShuffleBlockId) ?
                     mapId2PartitionId.get(((ShuffleBlockId) blockIds[i]).mapId()) :
                     mapId2PartitionId.get(((ShuffleBlockBatchId) blockIds[i]).mapId());

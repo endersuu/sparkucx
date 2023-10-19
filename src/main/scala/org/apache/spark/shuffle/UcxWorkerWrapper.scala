@@ -9,7 +9,7 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.shuffle.ucx.{UcxNode, UnsafeUtils}
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.unsafe.Platform
-import org.openucx.jucx.UcxException
+import org.openucx.jucx.{UcxCallback, UcxException}
 import org.openucx.jucx.ucp._
 
 import java.io.Closeable
@@ -161,15 +161,21 @@ class UcxWorkerWrapper(
 
     UcxWorkerWrapper.driverMetadataBuffer.computeIfAbsent(
       shuffleId,
-      (t: ShuffleId) => {
+      (shuffleId: ShuffleId) => {
         val buffer = Platform.allocateDirectBuffer(metadata.length)
         val request = driverEndpoint.getNonBlocking(
           metadata.address,
           metadata.driverRkey,
           buffer,
-          null
+          new UcxCallback {
+            override def onSuccess(request: UcpRequest): Unit =
+              logInfo(s"==> get metadata from driver, shuffleId=$shuffleId")
+          }
         )
         waitRequest(request)
+        logDebug(
+          s"UcxWorkerWrapper $id get metadata from driver for shuffle $shuffleId"
+        )
         buffer
       }
     )

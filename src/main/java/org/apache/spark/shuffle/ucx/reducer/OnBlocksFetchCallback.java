@@ -33,6 +33,7 @@ public class OnBlocksFetchCallback extends ReducerCallback {
         int position = 0;
         AtomicInteger refCount = new AtomicInteger(blockIds.length);
         for (int i = 0; i < blockIds.length; i++) {
+            logger.info("==> fetch request of {}th blockId={} success", i, blockIds[i]);
             BlockId block = blockIds[i];
             // Blocks are fetched to contiguous buffer.
             // |----block1---||---block2---||---block3---|
@@ -41,9 +42,12 @@ public class OnBlocksFetchCallback extends ReducerCallback {
             ByteBuffer blockBuffer = blocksMemory.getBuffer().slice();
             position += sizes[i];
             // Pass block to Spark's ShuffleFetchIterator.
+            int finalI = i;
+            logger.info("==> call listener.onBlockFetchSuccess()");
             listener.onBlockFetchSuccess(block.name(), new NioManagedBuffer(blockBuffer) {
                 @Override
                 public ManagedBuffer release() {
+                    logger.info("==> release blockBuffer of {}th blockId={}", finalI, block);
                     if (refCount.decrementAndGet() == 0) {
                         mempool.put(blocksMemory);
                     }
