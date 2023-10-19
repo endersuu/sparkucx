@@ -67,9 +67,9 @@ public class MemoryPool implements Closeable {
         assert roundedSize < Integer.MAX_VALUE && roundedSize > 0;
         AllocatorStack stack =
                 allocStackMap.computeIfAbsent((int) roundedSize, AllocatorStack::new);
-        RegisteredMemory result = stack.get();
-        result.getBuffer().position(0).limit(size);
-        return result;
+        RegisteredMemory registeredMemory = stack.get();
+        registeredMemory.getBuffer().position(0).limit(size);
+        return registeredMemory;
     }
 
     public void put(RegisteredMemory memory) {
@@ -100,6 +100,7 @@ public class MemoryPool implements Closeable {
         }
 
         private RegisteredMemory get() {
+            logger.info("==> Try to get buffer from AllocatorStack, length = {}", length);
             RegisteredMemory result = stack.pollFirst();
             if (result == null) {
                 if (length < conf.minRegistrationSize()) {

@@ -6,10 +6,10 @@ package org.apache.spark.shuffle
 
 import org.apache.spark.SparkException
 import org.apache.spark.shuffle.ucx.UnsafeUtils
-import org.openucx.jucx.UcxUtils
-import org.openucx.jucx.ucp.{UcpMemMapParams, UcpMemory}
+import org.openucx.jucx.ucp.{UcpMemMapParams, UcpMemory, UcpRequest}
+import org.openucx.jucx.{UcxCallback, UcxUtils}
 
-import java.io.{File, RandomAccessFile}
+import java.io.RandomAccessFile
 import java.util.concurrent.{ConcurrentHashMap, CopyOnWriteArrayList}
 import scala.collection.JavaConverters._
 
@@ -24,7 +24,7 @@ abstract class CommonUcxShuffleBlockResolver(
   // Keep track of registered memory regions to release them when shuffle not needed
   private val fileMappings =
     new ConcurrentHashMap[ShuffleId, CopyOnWriteArrayList[UcpMemory]].asScala
-  private val offsetMappings =
+  private val indexMappings =
     new ConcurrentHashMap[ShuffleId, CopyOnWriteArrayList[UcpMemory]].asScala
 
   /** Mapper commit protocol extension. Register index and data files and publish all needed
@@ -32,53 +32,50 @@ abstract class CommonUcxShuffleBlockResolver(
     */
   def writeIndexFileAndCommitCommon(
       shuffleId: ShuffleId,
-      mapId: Int,
+      mapPartitionId: Int,
       lengths: Array[Long],
-      dataTmp: File,
       indexBackFile: RandomAccessFile,
       dataBackFile: RandomAccessFile
   ): Unit = {
-    val startTime = System.currentTimeMillis()
 
-    fileMappings.putIfAbsent(shuffleId, new CopyOnWriteArrayList[UcpMemory]())
-    offsetMappings.putIfAbsent(shuffleId, new CopyOnWriteArrayList[UcpMemory]())
-
-    val indexFileChannel = indexBackFile.getChannel
-    val dataFileChannel = dataBackFile.getChannel
-
-    // Memory map and register data and index file.
-    val dataAddress =
-      UnsafeUtils.mmap(dataFileChannel, 0, dataBackFile.length())
-    val memMapParams = new UcpMemMapParams()
-      .setAddress(dataAddress)
-      .setLength(dataBackFile.length())
-    if (ucxShuffleManager.ucxShuffleConf.useOdp) {
-      memMapParams.nonBlocking()
-    }
-    val dataMemory =
-      ucxShuffleManager.ucxNode.getContext.memoryMap(memMapParams)
-    fileMappings(shuffleId).add(dataMemory)
     assume(
       indexBackFile.length() == UnsafeUtils.LONG_SIZE * (lengths.length + 1)
     )
 
-    val offsetAddress =
-      UnsafeUtils.mmap(indexFileChannel, 0, indexBackFile.length())
-    memMapParams.setAddress(offsetAddress).setLength(indexBackFile.length())
-    val offsetMemory =
+    val startTime = System.currentTimeMillis()
+
+    fileMappings.putIfAbsent(shuffleId, new CopyOnWriteArrayList[UcpMemory]())
+    indexMappings.putIfAbsent(shuffleId, new CopyOnWriteArrayList[UcpMemory]())
+
+    // Memory map and register data and index file.
+    def mapFile(backFile: RandomAccessFile): UcpMemory = {
+
+      val fileChannel = backFile.getChannel
+      val address = UnsafeUtils.mmap(fileChannel, 0, backFile.length())
+      val memMapParams = new UcpMemMapParams()
+        .setAddress(address)
+        .setLength(backFile.length())
+      if (ucxShuffleManager.ucxShuffleConf.useOdp) {
+        memMapParams.nonBlocking()
+      }
+
+      backFile.close()
+      fileChannel.close()
+
       ucxShuffleManager.ucxNode.getContext.memoryMap(memMapParams)
-    offsetMappings(shuffleId).add(offsetMemory)
+    }
 
-    dataFileChannel.close()
-    dataBackFile.close()
-    indexFileChannel.close()
-    indexBackFile.close()
+    val indexMemory = mapFile(indexBackFile)
+    val dataMemory = mapFile(dataBackFile)
 
-    val fileMemoryRkey = dataMemory.getRemoteKeyBuffer
-    val offsetRkey = offsetMemory.getRemoteKeyBuffer
+    indexMappings(shuffleId).add(indexMemory)
+    fileMappings(shuffleId).add(dataMemory)
+
+    val indexMemoryRKey = indexMemory.getRemoteKeyBuffer
+    val fileMemoryRKey = dataMemory.getRemoteKeyBuffer
 
     val metadataRegisteredMemory =
-      memPool.get(fileMemoryRkey.capacity() + offsetRkey.capacity() + 24)
+      memPool.get(fileMemoryRKey.capacity() + indexMemoryRKey.capacity() + 24)
     val metadataBuffer = metadataRegisteredMemory.getBuffer.slice()
 
     if (
@@ -94,21 +91,21 @@ abstract class CommonUcxShuffleBlockResolver(
 
     metadataBuffer.clear()
 
-    metadataBuffer.putLong(offsetMemory.getAddress)
+    metadataBuffer.putLong(indexMemory.getAddress)
     metadataBuffer.putLong(dataMemory.getAddress)
 
-    metadataBuffer.putInt(offsetRkey.capacity())
-    metadataBuffer.put(offsetRkey)
+    metadataBuffer.putInt(indexMemoryRKey.capacity())
+    metadataBuffer.put(indexMemoryRKey)
 
-    metadataBuffer.putInt(fileMemoryRkey.capacity())
-    metadataBuffer.put(fileMemoryRkey)
+    metadataBuffer.putInt(fileMemoryRKey.capacity())
+    metadataBuffer.put(fileMemoryRKey)
 
     metadataBuffer.clear()
 
     val workerWrapper = ucxShuffleManager.ucxNode.getThreadLocalWorker
     val driverMetadata = workerWrapper.getDriverMetadata(shuffleId)
     val driverOffset = driverMetadata.address +
-      mapId * ucxShuffleManager.ucxShuffleConf.metadataBlockSize
+      mapPartitionId * ucxShuffleManager.ucxShuffleConf.metadataBlockSize
 
     val driverEndpoint = workerWrapper.driverEndpoint
     val request = driverEndpoint.putNonBlocking(
@@ -116,7 +113,13 @@ abstract class CommonUcxShuffleBlockResolver(
       metadataBuffer.remaining(),
       driverOffset,
       driverMetadata.driverRkey,
-      null
+      new UcxCallback {
+        override def onSuccess(request: UcpRequest): Unit =
+          logInfo(
+            s"ucx shuffle write done: mapPartitionId=$mapPartitionId, " +
+              s"overhead of registering files and publishing takes ${System.currentTimeMillis() - startTime} ms"
+          )
+      }
     )
 
     workerWrapper.preconnect()
@@ -124,10 +127,6 @@ abstract class CommonUcxShuffleBlockResolver(
     // reducer starts.
     workerWrapper.waitRequest(request)
     memPool.put(metadataRegisteredMemory)
-    logInfo(
-      s"MapID: $mapId register files + publishing overhead: " +
-        s"${System.currentTimeMillis() - startTime} ms"
-    )
   }
 
   override def stop(): Unit = {
@@ -140,7 +139,7 @@ abstract class CommonUcxShuffleBlockResolver(
       .foreach((mappings: CopyOnWriteArrayList[UcpMemory]) =>
         mappings.asScala.par.foreach(unregisterAndUnmap)
       )
-    offsetMappings
+    indexMappings
       .remove(shuffleId)
       .foreach((mappings: CopyOnWriteArrayList[UcpMemory]) =>
         mappings.asScala.par.foreach(unregisterAndUnmap)

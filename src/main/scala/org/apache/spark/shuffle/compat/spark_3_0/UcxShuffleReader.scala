@@ -41,24 +41,30 @@ class UcxShuffleReader[K, C](
       SparkEnv.get.mapOutputTracker
         .getMapSizesByExecutorId(handle.shuffleId, startPartition, endPartition)
         .duplicate
-    val mapIdToBlockIndex = blocksByAddressIterator2.flatMap {
+
+    val blocksByAddress = blocksByAddressIterator2.toSeq
+    logInfo(s"==> read, blocksByAddress=${blocksByAddress.mkString}")
+
+    val mapIdToMapIdx = blocksByAddress.flatMap {
       case (_, blocks) =>
         blocks.map { case (blockId, _, mapIdx) =>
           blockId match {
-            case x: ShuffleBlockId =>
+            case shuffleBlockId: ShuffleBlockId =>
               (
-                x.mapId.asInstanceOf[java.lang.Long],
+                shuffleBlockId.mapId.asInstanceOf[java.lang.Long],
                 mapIdx.asInstanceOf[java.lang.Integer]
               )
-            case x: ShuffleBlockBatchId =>
+            case shuffleBlockBatchId: ShuffleBlockBatchId =>
               (
-                x.mapId.asInstanceOf[java.lang.Long],
+                shuffleBlockBatchId.mapId.asInstanceOf[java.lang.Long],
                 mapIdx.asInstanceOf[java.lang.Integer]
               )
             case _ => throw new SparkException("Unknown block")
           }
         }
     }.toMap
+
+    logInfo(s"==> mapIdToMapIdx=${mapIdToMapIdx.mkString}")
 
     val workerWrapper = SparkEnv.get.shuffleManager
       .asInstanceOf[UcxShuffleManager]
@@ -68,7 +74,7 @@ class UcxShuffleReader[K, C](
     val shuffleClient = new UcxShuffleClient(
       handle.shuffleId,
       workerWrapper,
-      mapIdToBlockIndex.asJava,
+      mapIdToMapIdx.asJava,
       shuffleMetrics
     )
     val shuffleIterator = new ShuffleBlockFetcherIterator(

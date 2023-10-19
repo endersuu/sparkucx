@@ -53,7 +53,7 @@ public class UcxNode implements Closeable {
     private boolean closed = false;
     // Driver
     private UcpListener listener;
-    private List<UcpEndpoint> backwardEndpoints = new ArrayList<>();
+    private final List<UcpEndpoint> backwardEndpoints = new ArrayList<>();
     // Executor
     private UcpEndpoint globalDriverEndpoint;
 
@@ -86,6 +86,7 @@ public class UcxNode implements Closeable {
             UcpWorker localWorker = context.newWorker(workerParams);
             UcxWorkerWrapper result = new UcxWorkerWrapper(localWorker,
                     conf, allocatedWorkers.size());
+            logger.info("==> create UcxWorkerWrapper {}", allocatedWorkers.size());
             if (result.id() > conf.coresPerProcess()) {
                 logger.warn("Thread: {} - creates new worker {} > numCores",
                         Thread.currentThread().getId(), result.id());

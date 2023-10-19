@@ -6,7 +6,10 @@ package org.apache.spark.shuffle.compat.spark_3_0
 
 import org.apache.spark.network.shuffle.ExecutorDiskUtils
 import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
-import org.apache.spark.shuffle.{CommonUcxShuffleBlockResolver, CommonUcxShuffleManager}
+import org.apache.spark.shuffle.{
+  CommonUcxShuffleBlockResolver,
+  CommonUcxShuffleManager
+}
 import org.apache.spark.storage.ShuffleIndexBlockId
 import org.apache.spark.{SparkEnv, TaskContext}
 
@@ -25,11 +28,17 @@ class UcxShuffleBlockResolver(ucxShuffleManager: CommonUcxShuffleManager)
       dataTmp: File
   ): Unit = {
     super.writeIndexFileAndCommit(shuffleId, mapId, lengths, dataTmp)
-    // In Spark-3.0 MapId is long and unique among all jobs in spark. We need to use partitionId as offset
+
+    // In Spark-3.0 MapId is long and unique among all jobs in spark. We need to use mapPartitionId as offset
     // in metadata buffer
-    val partitionId = TaskContext.getPartitionId()
+    val mapPartitionId = TaskContext.getPartitionId()
     val dataFile = getDataFile(shuffleId, mapId)
     val dataBackFile = new RandomAccessFile(dataFile, "rw")
+
+    logInfo(
+      s"==> writeIndexFileAndCommit, shuffleId=$shuffleId, mapId=$mapId, mapPartitionId=$mapPartitionId}"
+        + s"==> lengths=${lengths.mkString}"
+    )
 
     if (dataBackFile.length() == 0) {
       dataBackFile.close()
@@ -41,9 +50,8 @@ class UcxShuffleBlockResolver(ucxShuffleManager: CommonUcxShuffleManager)
 
     writeIndexFileAndCommitCommon(
       shuffleId,
-      partitionId,
+      mapPartitionId,
       lengths,
-      dataTmp,
       indexBackFile,
       dataBackFile
     )
