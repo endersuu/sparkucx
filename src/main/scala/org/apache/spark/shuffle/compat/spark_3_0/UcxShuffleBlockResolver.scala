@@ -6,10 +6,7 @@ package org.apache.spark.shuffle.compat.spark_3_0
 
 import org.apache.spark.network.shuffle.ExecutorDiskUtils
 import org.apache.spark.shuffle.IndexShuffleBlockResolver.NOOP_REDUCE_ID
-import org.apache.spark.shuffle.{
-  CommonUcxShuffleBlockResolver,
-  CommonUcxShuffleManager
-}
+import org.apache.spark.shuffle.{CommonUcxShuffleBlockResolver, CommonUcxShuffleManager}
 import org.apache.spark.storage.ShuffleIndexBlockId
 import org.apache.spark.{SparkEnv, TaskContext}
 
@@ -37,7 +34,7 @@ class UcxShuffleBlockResolver(ucxShuffleManager: CommonUcxShuffleManager)
 
     logInfo(
       s"==> writeIndexFileAndCommit, shuffleId=$shuffleId, mapId=$mapId, mapPartitionId=$mapPartitionId, "
-        + s"lengths=${lengths.mkString(", ")}"
+        + s"lengths=${lengths.mkString("[", ", ", "]")}"
     )
 
     if (dataBackFile.length() == 0) {
