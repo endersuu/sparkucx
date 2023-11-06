@@ -189,7 +189,7 @@ public class UcxNode implements Closeable {
         }
         rpcConnections.keySet().forEach(UcpEndpoint::close);
         rpcConnections.clear();
-        backwardEndpoints.forEach(UcpEndpoint::close);
+        backwardEndpoints.forEach(UcpEndpoint::closeNonBlockingFlush);
         backwardEndpoints.clear();
     }
 
